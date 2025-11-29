@@ -102,7 +102,7 @@ export default function App() {
             <div className="bg-indigo-600 p-2 rounded-lg">
               <Sparkles className="text-white h-5 w-5" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Coze 语音工作室</h1>
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">新手教程 语音工作室</h1>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-500">
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200">
