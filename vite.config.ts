@@ -18,6 +18,14 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      optimizeDeps: {
+        exclude: ['lamejs'], // 排除 lamejs 从预构建，使用动态加载
+      },
+      build: {
+        rollupOptions: {
+          external: [], // 不排除任何模块
+        },
+      },
     };
 });

@@ -3,10 +3,12 @@ import { GeneratedAudio, CozeVoice } from './types';
 import { generateSpeech, fetchVoices } from './services/geminiService';
 import VoiceSelector from './components/VoiceSelector';
 import AudioPlayer from './components/AudioPlayer';
-import { Sparkles, History, Trash2, Wand2, KeyRound, Mic } from 'lucide-react';
+import Timeline from './components/Timeline';
+import BatchImport, { BatchImportItem } from './components/BatchImport';
+import { Sparkles, History, Trash2, Wand2, KeyRound, Mic, FileText, Download } from 'lucide-react';
 
 export default function App() {
-  const [token, setToken] = useState('pat_SNrKGWEvavVbQ8zEPxnX157xeHcMBkeWW23Az6N1gvSbB9CBV6EtlUJ8Zrr6gh1R');
+  const [token, setToken] = useState('pat_chAECYsULaJhdJgXCpSfvilGnRSTtJnHv8iMPfFlQGPxXPTWtnwpbi7Mv2fq5rJv');
   const [text, setText] = useState('');
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
   const [voices, setVoices] = useState<CozeVoice[]>([]);
@@ -14,6 +16,8 @@ export default function App() {
   const [isLoadingVoices, setIsLoadingVoices] = useState(false);
   const [history, setHistory] = useState<GeneratedAudio[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isBatchImportOpen, setIsBatchImportOpen] = useState(false);
+  const [batchImportProgress, setBatchImportProgress] = useState<{ current: number; total: number } | null>(null);
 
   // Fetch voices when token changes
   useEffect(() => {
@@ -94,6 +98,125 @@ export default function App() {
     setHistory([]);
   };
 
+  // 导出所有生成记录
+  const exportAllHistory = async () => {
+    if (history.length === 0) {
+      setError('没有可导出的记录');
+      return;
+    }
+
+    try {
+      // 创建一个 zip 文件或者分别下载每个音频
+      // 这里我们采用简单的方式：为每个音频创建下载链接
+      for (let i = 0; i < history.length; i++) {
+        const item = history[i];
+        const link = document.createElement('a');
+        link.href = item.url;
+        // 使用时间戳和音色名称作为文件名
+        const timestamp = new Date(item.timestamp).toLocaleString('zh-CN').replace(/[/:]/g, '-');
+        link.download = `${item.voice_name}_${timestamp}.mp3`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // 添加延迟避免浏览器阻止多个下载
+        if (i < history.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      }
+    } catch (err: any) {
+      console.error('导出失败:', err);
+      setError('导出失败，请重试');
+    }
+  };
+
+  // 批量导入处理
+  const handleBatchImport = async (items: BatchImportItem[]) => {
+    if (!token) {
+      setError("请输入身份令牌 (Identity Token)");
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+    setBatchImportProgress({ current: 0, total: items.length });
+
+    const generatedAudios: GeneratedAudio[] = [];
+    let currentTimelineTime = 0; // 当前时间线位置
+
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        console.log(`处理第 ${i + 1} 个语音项:`, {
+          text: item.text.substring(0, 20) + '...',
+          voiceName: item.voiceName,
+          breakTime: item.breakTime
+        });
+        setBatchImportProgress({ current: i + 1, total: items.length });
+
+        try {
+          // 生成语音
+          const audioBlob = await generateSpeech(item.text, item.voiceId, token);
+          const audioUrl = URL.createObjectURL(audioBlob);
+
+          // 获取音频时长
+          const audioEl = new Audio(audioUrl);
+          const duration = await new Promise<number>((resolve) => {
+            audioEl.addEventListener('loadedmetadata', () => {
+              resolve(audioEl.duration);
+            });
+            audioEl.addEventListener('error', () => resolve(0));
+            audioEl.load();
+          });
+
+          const newAudio: GeneratedAudio = {
+            id: crypto.randomUUID(),
+            text: item.text,
+            voice_name: item.voiceName,
+            voice_id: item.voiceId,
+            blob: audioBlob,
+            url: audioUrl,
+            timestamp: Date.now(),
+            duration: duration,
+          };
+
+          generatedAudios.push(newAudio);
+
+          // 添加到历史记录
+          setHistory((prev) => [newAudio, ...prev]);
+
+          // 添加到时间线（使用已加载的时长）
+          if (duration > 0 && (window as any).__timelineAddAudioWithTime) {
+            console.log(`添加语音到时间线: 位置=${currentTimelineTime.toFixed(2)}s, 时长=${duration.toFixed(2)}s, 间隔=${item.breakTime || 0}s`);
+            (window as any).__timelineAddAudioWithTime(newAudio, currentTimelineTime);
+            // 更新时间线位置：当前音频结束时间 + 间隔时间
+            currentTimelineTime += duration + (item.breakTime || 0);
+            console.log(`更新时间线位置: ${currentTimelineTime.toFixed(2)}s`);
+          } else if ((window as any).__timelineAddAudio) {
+            // 如果时间线不支持指定时间，使用默认方式
+            (window as any).__timelineAddAudio(newAudio);
+            // 尝试更新时间线位置（如果可能）
+            if (duration > 0) {
+              currentTimelineTime += duration + (item.breakTime || 0);
+            }
+          }
+
+          // 添加一个小延迟，避免API请求过快
+          if (i < items.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (err: any) {
+          console.error(`生成第 ${i + 1} 个语音失败:`, err);
+          setError(`第 ${i + 1} 个语音生成失败: ${err.message || '未知错误'}`);
+          // 继续处理下一个
+        }
+      }
+    } finally {
+      setIsGenerating(false);
+      setBatchImportProgress(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-blue-50 font-sans">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -102,7 +225,7 @@ export default function App() {
             <div className="bg-indigo-600 p-2 rounded-lg">
               <Sparkles className="text-white h-5 w-5" />
             </div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">新手教程 语音工作室</h1>
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">新手教程 文本转语音</h1>
           </div>
           <div className="flex items-center gap-4 text-sm text-gray-500">
             <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-100 border border-gray-200">
@@ -112,40 +235,60 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-32">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
           {/* Left Column: Controls */}
-          <div className="lg:col-span-7 space-y-6">
+          <div className="lg:col-span-8 space-y-6">
 
             {/* Input Section */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-6">
 
+              {/* Batch Import Progress */}
+              {batchImportProgress && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-blue-900">
+                      批量生成进度
+                    </span>
+                    <span className="text-sm text-blue-700">
+                      {batchImportProgress.current} / {batchImportProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full bg-blue-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(batchImportProgress.current / batchImportProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Token Input */}
-              <div className="space-y-3">
-                <label htmlFor="token-input" className="block text-sm font-medium text-gray-700 flex items-center gap-1">
-                  <KeyRound size={14} />
-                  身份令牌 (Identity Token)
-                </label>
-                <input
-                  type="password"
-                  id="token-input"
-                  className="block w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm p-3 bg-gray-50"
-                  placeholder="请输入您的 Coze API Token"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-              </div>
+
 
               {/* Text Input */}
               <div className="space-y-3">
-                <label htmlFor="text-input" className="block text-sm font-medium text-gray-700">
-                  文本输入 (Input Text)
-                </label>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="text-input" className="block text-sm font-medium text-gray-700">
+                    文本输入 (Input Text)
+                  </label>
+                  <button
+                    onClick={() => setIsBatchImportOpen(true)}
+                    disabled={isGenerating || !token || voices.length === 0}
+                    className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${isGenerating || !token || voices.length === 0
+                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                  >
+                    <FileText size={16} />
+                    批量导入
+                  </button>
+                </div>
                 <div className="relative">
                   <textarea
                     id="text-input"
-                    rows={5}
+                    rows={4}
                     className="block w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-base resize-none p-4 bg-gray-50"
                     placeholder="在此输入您想要合成语音的文本..."
                     value={text}
@@ -202,20 +345,15 @@ export default function App() {
               </button>
             </div>
 
-            <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-100">
-              <h3 className="text-sm font-semibold text-indigo-900 mb-1">提示 (Tips)</h3>
-              <p className="text-sm text-indigo-700">
-                请确保您的 Token 具有 Audio 权限。不同的音色可能支持不同的语言，请尝试输入匹配的语言文本。
-              </p>
-            </div>
+
           </div>
 
           {/* Right Column: Results & History */}
-          <div className="lg:col-span-5 space-y-6">
+          <div className="lg:col-span-4 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <History size={20} className="text-gray-500" />
-                生成记录 (History)
+              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <History size={18} className="text-gray-500" />
+                生成记录
               </h2>
               {history.length > 0 && (
                 <button
@@ -223,27 +361,46 @@ export default function App() {
                   className="text-xs text-red-600 hover:text-red-700 flex items-center gap-1 hover:bg-red-50 px-2 py-1 rounded transition-colors"
                 >
                   <Trash2 size={12} />
-                  清空 (Clear)
+                  清空
                 </button>
               )}
             </div>
 
-            <div className="space-y-4">
+            {/* 导出所有记录按钮 */}
+            {history.length > 0 && (
+              <button
+                onClick={exportAllHistory}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-sm"
+              >
+                <Download size={16} />
+                导出所有记录 ({history.length})
+              </button>
+            )}
+
+            <div className="space-y-2">
               {history.length === 0 ? (
-                <div className="text-center py-12 px-4 rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50/50">
-                  <div className="mx-auto w-12 h-12 bg-white rounded-full flex items-center justify-center mb-3 shadow-sm text-gray-300">
-                    <Mic size={24} />
+                <div className="text-center py-8 px-4 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50">
+                  <div className="mx-auto w-10 h-10 bg-white rounded-full flex items-center justify-center mb-2 shadow-sm text-gray-300">
+                    <Mic size={20} />
                   </div>
-                  <h3 className="text-sm font-medium text-gray-900">暂无生成记录</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    输入 Token，选择音色并生成语音。
+                  <h3 className="text-xs font-medium text-gray-900">暂无生成记录</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    选择音色并生成语音
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4 animate-fade-in-up">
-                  {history.map((item) => (
-                    <AudioPlayer key={item.id} audio={item} />
-                  ))}
+                <div className="space-y-3 animate-fade-in-up max-h-[calc(100vh-350px)] overflow-y-auto pr-1">{history.map((item) => (
+                  <AudioPlayer
+                    key={item.id}
+                    audio={item}
+                    onAddToTimeline={(audio) => {
+                      // 通过 window 对象调用 Timeline 的添加函数
+                      if ((window as any).__timelineAddAudio) {
+                        (window as any).__timelineAddAudio(audio);
+                      }
+                    }}
+                  />
+                ))}
                 </div>
               )}
             </div>
@@ -251,6 +408,18 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* Timeline */}
+      <Timeline history={history} />
+
+      {/* Batch Import Modal */}
+      <BatchImport
+        isOpen={isBatchImportOpen}
+        onClose={() => setIsBatchImportOpen(false)}
+        voices={voices}
+        onImport={handleBatchImport}
+        token={token}
+      />
     </div>
   );
 }

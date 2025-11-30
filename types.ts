@@ -27,3 +27,17 @@ export interface TTSState {
   error: string | null;
   history: GeneratedAudio[];
 }
+
+export interface TimelineClip {
+  id: string;
+  audioId: string;
+  startTime: number; // 在时间线中的开始时间（秒）
+  audio: GeneratedAudio;
+}
+
+export interface TimelineState {
+  clips: TimelineClip[];
+  currentTime: number;
+  isPlaying: boolean;
+  duration: number;
+}
