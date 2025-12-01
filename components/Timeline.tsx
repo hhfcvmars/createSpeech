@@ -575,23 +575,22 @@ const Timeline: React.FC<TimelineProps> = ({ history, onExport, onAddAudio }) =>
         }
       }
 
-      // 转换为 MP3（如果失败则使用 WAV）
-      console.log('开始转换为 MP3 格式...');
-      const audioBlob = await audioBufferToMp3(audioBuffer);
-      const isMp3 = audioBlob.type.includes('mpeg') || audioBlob.type.includes('mp3');
-      console.log(`${isMp3 ? 'MP3' : 'WAV'} 转换完成，文件大小:`, audioBlob.size, 'bytes, MIME 类型:', audioBlob.type);
+      // 转换为 WAV 格式
+      console.log('开始转换为 WAV 格式...');
+      const audioBlob = audioBufferToWav(audioBuffer);
+      console.log('WAV 转换完成，文件大小:', audioBlob.size, 'bytes, MIME 类型:', audioBlob.type);
       
       if (onExport) {
         onExport(audioBlob);
       } else {
-        // 默认下载，根据实际格式设置文件扩展名
+        // 默认下载，使用 WAV 格式
         const url = URL.createObjectURL(audioBlob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `合成音频-${Date.now()}.${isMp3 ? 'mp3' : 'wav'}`;
+        a.download = `合成音频-${Date.now()}.wav`;
         a.click();
         URL.revokeObjectURL(url);
-        console.log(`${isMp3 ? 'MP3' : 'WAV'} 文件下载已触发，文件名:`, a.download);
+        console.log('WAV 文件下载已触发，文件名:', a.download);
       }
     } catch (error) {
       console.error('合成失败:', error);

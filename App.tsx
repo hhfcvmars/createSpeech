@@ -114,7 +114,7 @@ export default function App() {
         link.href = item.url;
         // 使用时间戳和音色名称作为文件名
         const timestamp = new Date(item.timestamp).toLocaleString('zh-CN').replace(/[/:]/g, '-');
-        link.download = `${item.voice_name}_${timestamp}.mp3`;
+        link.download = `${item.voice_name}_${timestamp}.wav`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
